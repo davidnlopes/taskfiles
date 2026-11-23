@@ -1,11 +1,21 @@
 # Taskfiles
 
-Reusable [Task](https://taskfile.dev) tasks that you include in other repositories. Each vertical, such as Terraform, is one YAML file with a documented public API. That API is a set of variables you set and tasks you call.
+Reusable [Task](https://taskfile.dev) Taskfiles that you include in your own repositories. Each file covers one tool, such as Terraform or Docker, and exposes a public API: variables you set and tasks you call. Your project supplies the values, and these files supply the commands.
+
+| Taskfile | Runs |
+| --- | --- |
+| `terraform.yml` | Terraform or OpenTofu against one root module |
+| `golang.yml` | Format, lint, test, and build for one Go module |
+| `node.yml` | Install and package scripts for one npm package |
+| `docker.yml` | Image build and push as separate tasks |
+
+To list the tasks of an included Taskfile, run `task --list`. The `vars` block of the first task in each file holds the optional variables and their defaults. Required variables appear under `requires`.
 
 ## Requirements
 
 - Task 3.47 or later.
 - A root `Taskfile.yml` with `version: '3'`. Task rejects an include whose `version` differs from the root.
+- The tool that each Taskfile wraps. Terraform tasks need Terraform 1.4 or later, and Docker tasks need Docker 23.0 or later for BuildKit.
 
 ## Add the repository to a project
 
@@ -17,15 +27,15 @@ git submodule add https://github.com/davidnlopes/taskfiles.git .taskfiles
 
 Clone projects that use it with `git clone --recurse-submodules`. In CI, enable recursive submodule checkout.
 
-To update to a newer version, run:
+To update to the latest commit, run:
 
 ```bash
 git submodule update --remote .taskfiles
 ```
 
-## Use a vertical
+## Use a Taskfile
 
-Include the vertical in your `Taskfile.yml`, set the variables you need, and call the tasks:
+Include the file in your `Taskfile.yml`, set the variables you need, and call the tasks:
 
 ```yaml
 version: '3'
@@ -34,32 +44,28 @@ vars:
   TERRAFORM_DIR: '{{.TERRAFORM_DIR | default "terraform"}}'
   TERRAFORM_WORKSPACE: '{{.TERRAFORM_WORKSPACE | default "my-project-dev"}}'
 
-env:
-  AWS_PROFILE: my-profile
-
 includes:
   tf: .taskfiles/terraform.yml
 ```
 
-Then run:
-
 ```bash
-task --list                                # lists tasks
+task --list
 task tf:plan TERRAFORM_VAR_FILES=configs/dev.tfvars
 task tf:apply TERRAFORM_AUTO_APPROVE=true
 ```
 
-You choose each namespace in `includes`. This README uses `tf` and `go`, and it uses `docker` for the Docker vertical.
+You choose each namespace in `includes`. This README uses `tf`, `go`, and `docker`.
 
 ### Conventions
 
-These rules apply to every vertical:
+These rules hold for every Taskfile:
 
-- Public variables are uppercase and use the vertical's prefix, for example `TERRAFORM_DIR`. Lowercase variables are internal and can change without notice.
-- Optional variables have a default. Required variables have none, because their values depend on your project. Tasks stop before they run anything if a required variable is missing, and before their own commands if it is empty.
+- Public variables are uppercase and start with the tool's prefix, for example `TERRAFORM_DIR`. Lowercase variables are internal and can change without notice.
+- Optional variables have a default. Required variables have none. A task stops before it runs anything if a required variable is missing, and before its own commands if the value is empty.
 - Boolean variables accept only `true` or `false`. Any other value stops the task with an error.
 - Variables that hold many values are space-separated strings. To keep a space inside a value, quote it, for example `DOCKER_BUILD_ARGS='TITLE="two words" VERSION=1'`. YAML lists are not supported.
-- Tasks that run commands also accept an `*_ARGS` or `*_FLAGS` variable. Use it to pass flags that the vertical does not expose.
+- Tasks that run commands also accept an `*_ARGS` or `*_FLAGS` variable for flags that the Taskfile does not expose.
+- Prefixes avoid names that the wrapped tool reads from the environment. For example, Terraform variables start with `TERRAFORM_`, not `TF_`, because Terraform reads `TF_*` itself.
 
 ### Set variable values
 
@@ -77,9 +83,9 @@ A plain `NAME: value` behaves differently. In the `vars` of an include, it beats
 
 An empty value on the command line falls back to the value in your Taskfile when you use the `default` form.
 
-### Use a vertical more than once
+### Include a Taskfile more than once
 
-To run the same vertical against several modules, include it under several namespaces:
+To run the same Taskfile against several modules, include it under several namespaces:
 
 ```yaml
 includes:
@@ -93,23 +99,9 @@ includes:
       GO_DIR: services/worker
 ```
 
-### Set the default task
+### Wrap a task
 
-`task` with no name runs the `default` task in your Taskfile. If you have none, Task lists the tasks and exits with an error status. To choose what it runs, define that task:
-
-```yaml
-includes:
-  tf: .taskfiles/terraform.yml
-
-tasks:
-  default:
-    cmds:
-      - task: tf:plan
-```
-
-### Extend a task
-
-To run your own step before a shared task, or to give it a project name, define a task that calls it. Add a `desc` to list your task in `task --list`:
+To run your own step before a shared task, or to give it a project-specific name, define a task that calls it. Add a `desc` to list your task in `task --list`:
 
 ```yaml
 tasks:
@@ -124,80 +116,23 @@ tasks:
       - aws sts get-caller-identity
 ```
 
-## Terraform (`terraform.yml`)
+## Notes per Taskfile
 
-`terraform.yml` runs Terraform against one root module. It requires Terraform 1.4 or later. To use OpenTofu, set `TERRAFORM_BIN=tofu`.
+### Terraform
 
-| Task | Description |
-| --- | --- |
-| `init` | Initialise the root module. |
-| `workspace` | Select `TERRAFORM_WORKSPACE`, creating it if missing. |
-| `fmt` | Rewrite Terraform files to canonical format. |
-| `lint` | Check formatting and validate the configuration. |
-| `plan` | Show the changes Terraform would make. |
-| `apply` | Apply changes. |
-| `destroy` | Destroy all resources. |
-| `lock` | Record provider checksums for `TERRAFORM_LOCK_PLATFORMS`. |
-
-### Terraform variables
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `TERRAFORM_BIN` | `terraform` | Terraform executable. |
-| `TERRAFORM_ENV` | (empty) | Environment assignments that prefix every Terraform command, for example `AWS_PROFILE=my-profile`. |
-| `TERRAFORM_DIR` | `.` | Root module directory, passed to `-chdir`. |
-| `TERRAFORM_WORKSPACE` | (empty) | Workspace to select, created if missing. If empty, the tasks do not touch workspaces. |
-| `TERRAFORM_VAR_FILES` | (empty) | Space-separated `.tfvars` files for `plan`, `apply`, and `destroy`. If empty, no `-var-file` flag is passed. |
-| `TERRAFORM_AUTO_APPROVE` | `false` | If `true`, adds `-auto-approve` to `apply` and `destroy`. |
-| `TERRAFORM_INIT_ARGS` | (empty) | Extra flags for `init`, for example `-backend-config=backend.hcl`. |
-| `TERRAFORM_PLAN_ARGS` | (empty) | Extra flags for `plan`, for example `-lock=false`. |
-| `TERRAFORM_APPLY_ARGS` | (empty) | Extra flags for `apply`. |
-| `TERRAFORM_DESTROY_ARGS` | (empty) | Extra flags for `destroy`. |
-| `TERRAFORM_LOCK_PLATFORMS` | `linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64` | Platforms that `lock` records in `.terraform.lock.hcl`. |
+To use OpenTofu, set `TERRAFORM_BIN=tofu`.
 
 Terraform runs with `-chdir=$TERRAFORM_DIR`, so it resolves relative paths in `TERRAFORM_VAR_FILES` and `TERRAFORM_*_ARGS` against `TERRAFORM_DIR`.
 
 To give Terraform an environment variable that your other tasks must not see, use `TERRAFORM_ENV`. A root `env` in your Taskfile reaches every task, and an `env` on a task that calls a Terraform task does not reach it. The value is shell text, so quote any value that contains a space, for example `NAME="two words"`.
 
-The variables use the `TERRAFORM_` prefix, not `TF_`. Terraform reads `TF_*` environment variables itself. For example, `TF_WORKSPACE` overrides workspace selection.
-
-## Go (`golang.yml`)
-
-`golang.yml` formats, lints, tests, and builds one Go module. It needs only the Go toolchain.
-
-| Task | Description |
-| --- | --- |
-| `fmt` | Rewrite Go files with `gofmt -s`. |
-| `tidy` | Add missing and remove unused module requirements. |
-| `lint` | Check `gofmt -s` formatting and run `go vet`. |
-| `test` | Run tests, writing `GO_COVER_PROFILE` when set. |
-| `cover-html` | Run tests and render the coverage profile as HTML. |
-| `build` | Build `GO_BUILD_PKG` into `GO_BUILD_OUTPUT`. |
-
-### Go variables
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `GO_BIN` | `go` | Go executable. `gofmt` comes from the same toolchain's `GOROOT`. |
-| `GO_ENV` | (empty) | Environment assignments that prefix `go test` and `go build`, for example `COVERAGE_OUTPUT=out.json`. |
-| `GO_DIR` | `.` | Module directory. Every command runs from here. |
-| `GO_BUILD_PKG` | `.` | Package that `build` compiles, for example `./cmd/api`. |
-| `GO_BUILD_OUTPUT` | `<root>/bin/` | Output path. If it ends with `/`, Go names the binary after the package. |
-| `GO_BUILD_OS` | (empty) | `GOOS` for `build` only. If empty, Go builds for the host OS. |
-| `GO_BUILD_ARCH` | (empty) | `GOARCH` for `build` only. If empty, Go builds for the host architecture. |
-| `GO_BUILD_CGO_ENABLED` | (empty) | `CGO_ENABLED` for `build` only, `0` or `1`. If empty, Go uses the value from the environment. |
-| `GO_BUILD_FLAGS` | (empty) | Extra flags for `go build`, for example `-trimpath -ldflags="-s -w"`. |
-| `GO_TEST_CMD` | `<GO_BIN> test` | Command that `test` runs, followed by `GO_TEST_FLAGS`, the coverage flag, and `GO_TEST_PKGS`. |
-| `GO_TEST_PKGS` | `./...` | Packages that `test` runs. |
-| `GO_TEST_FLAGS` | (empty) | Extra flags for `go test`, for example `-v -race -tags=integration`. |
-| `GO_COVER_PROFILE` | `cover.out` | Coverage profile that `test` writes. If empty, `test` does not collect coverage. |
-| `GO_COVER_HTML` | `cover.html` | HTML report that `cover-html` writes. |
-
-Commands run from `GO_DIR`, so Go resolves relative paths in `GO_BUILD_OUTPUT`, `GO_COVER_PROFILE`, and `GO_COVER_HTML` against `GO_DIR`.
+### Go
 
 `GO_BUILD_OS`, `GO_BUILD_ARCH`, and `GO_BUILD_CGO_ENABLED` apply only to `build`. If you export `GOOS` instead, `go test` and `go vet` also compile for that OS, and `go test` cannot run a binary built for another OS.
 
-To give Go an environment variable that your other tasks must not see, use `GO_ENV`. The value is shell text, so quote any value that contains a space, for example `NAME="two words"`. `cover-html` forwards it to `test`.
+Commands run from `GO_DIR`, so Go resolves relative paths in `GO_BUILD_OUTPUT`, `GO_COVER_PROFILE`, and `GO_COVER_HTML` against `GO_DIR`.
+
+To give Go an environment variable that your other tasks must not see, use `GO_ENV`. It follows the same quoting rule as `TERRAFORM_ENV`, and `cover-html` forwards it to `test`.
 
 To run tests through another runner, set `GO_TEST_CMD`. For example, [gotestsum](https://github.com/gotestyourself/gotestsum) prints each test as it finishes, while `go test` holds back a package's output until the whole package is done. End the command with `--`, so that gotestsum passes the flags and packages after it to `go test`:
 
@@ -221,46 +156,19 @@ tasks:
           GO_BUILD_OUTPUT: '{{.ROOT_DIR}}/bin/seed'
 ```
 
-## Node (`node.yml`)
+### Node
 
-`node.yml` installs dependencies and runs the package scripts of one npm package. Every task runs a script from `package.json`, so `package.json` stays the source of truth for the commands. It supports npm only.
-
-| Task | Description |
-| --- | --- |
-| `install` | Install locked dependencies with `npm ci`. |
-| `fmt` | Run the `NODE_FMT_SCRIPT` package script. |
-| `lint` | Run each `NODE_LINT_SCRIPTS` package script, in order. |
-| `test` | Run the `NODE_TEST_SCRIPT` package script. |
-| `build` | Run the `NODE_BUILD_SCRIPT` package script. |
-| `audit` | Audit dependencies for known vulnerabilities. |
+Every task runs a script from `package.json`, so `package.json` stays the source of truth for the commands. Only npm is supported.
 
 `install` runs once per `task` invocation and skips when `node_modules/.package-lock.json` is newer than `package-lock.json`. Other tasks do not call `install`. To install first, add a `deps` entry that calls `install` in your own task.
 
-### Node variables
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `NODE_BIN` | `npm` | Package manager executable. |
-| `NODE_DIR` | `.` | Directory that holds `package.json`. Every command runs from here. |
-| `NODE_INSTALL_FLAGS` | (empty) | Extra flags for `npm ci`, for example `--ignore-scripts`. |
-| `NODE_FMT_SCRIPT` | `format` | Script that `fmt` runs. |
-| `NODE_LINT_SCRIPTS` | `lint` | Space-separated scripts that `lint` runs in order. `lint` stops at the first failure. |
-| `NODE_TEST_SCRIPT` | `test` | Script that `test` runs. |
-| `NODE_BUILD_SCRIPT` | `build` | Script that `build` runs. |
-| `NODE_AUDIT_FLAGS` | (empty) | Extra flags for `npm audit`, for example `--audit-level=high`. |
-
 `lint` is check-only when your scripts are. Point `NODE_LINT_SCRIPTS` at scripts that do not rewrite files.
 
-## Docker (`docker.yml`)
+### Docker
 
-`docker.yml` builds an image and pushes it to a registry as two separate tasks. It requires Docker 23.0 or later, where `docker build` uses BuildKit. Run `docker login` before you push.
+Run `docker login` before you push.
 
-| Task | Description |
-| --- | --- |
-| `build` | Build the image and tag it locally. |
-| `push` | Push the tags that `build` created to `DOCKER_REGISTRY`. |
-
-To test an image and then push the same image, run `build` and then `push`, with the same `DOCKER_REGISTRY`, `DOCKER_IMAGE`, and `DOCKER_TAGS`:
+`DOCKER_IMAGE` is required. `DOCKER_REGISTRY` is required by `push`. To test an image and then push the same image, run `build` and then `push` with the same `DOCKER_REGISTRY`, `DOCKER_IMAGE`, and `DOCKER_TAGS`:
 
 ```yaml
 vars:
@@ -282,20 +190,12 @@ To publish a multi-platform image, pass `--push` to `build`, because a local ima
 task docker:build DOCKER_TAGS=1.2.0 DOCKER_BUILD_PLATFORMS="linux/amd64 linux/arm64" DOCKER_BUILD_FLAGS=--push
 ```
 
-### Docker variables
+The build context variable is `DOCKER_BUILD_CONTEXT`, because the Docker CLI reads `DOCKER_CONTEXT` to select a Docker context.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `DOCKER_IMAGE` | Required | Image name without registry or tag, for example `my-app`. |
-| `DOCKER_REGISTRY` | Required by `push`, and by `build` when `DOCKER_BUILD_FLAGS` contains `--push` | Registry and optional namespace, for example `ghcr.io/my-org`. If you set it for `build`, it prefixes the local tags. |
-| `DOCKER_BIN` | `docker` | Docker executable. |
-| `DOCKER_TAGS` | `latest` | Space-separated image tags. |
-| `DOCKER_BUILD_CONTEXT` | `.` | Build context. |
-| `DOCKER_BUILD_FILE` | (empty) | Dockerfile path, relative to the task's working directory. If empty, Docker uses `Dockerfile` in the build context. |
-| `DOCKER_BUILD_TARGET` | (empty) | Build stage to stop at. If empty, Docker builds the last stage. |
-| `DOCKER_BUILD_ARGS` | (empty) | Space-separated `KEY=VALUE` entries, passed as `--build-arg`. |
-| `DOCKER_BUILD_PLATFORMS` | (empty) | Space-separated platforms, for example `linux/amd64 linux/arm64`. If empty, Docker builds for the host platform. |
-| `DOCKER_BUILD_FLAGS` | (empty) | Extra flags for `docker build`, for example `--pull --no-cache`. |
-| `DOCKER_PUSH_FLAGS` | (empty) | Extra flags for `docker push`, for example `--quiet`. |
+## Develop this repository
 
-The variables avoid names that the Docker CLI reads from the environment. For example, `DOCKER_CONTEXT` selects a Docker context, so the build context variable is `DOCKER_BUILD_CONTEXT`.
+To check a change, include the edited file in a scratch project and run its tasks with `task`. The repository has no test suite or CI of its own.
+
+## License
+
+See [`LICENSE`](LICENSE).
